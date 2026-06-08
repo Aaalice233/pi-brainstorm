@@ -1,11 +1,14 @@
 # pi-brainstorm
 
-A small pi extension that adds a read-only `/brainstorm` mode.
+> Fork of [@paulmupeters/pi-brainstorm](https://github.com/paulmupeters/pi-brainstorm) with `ask_user_question` tool integration.
+
+A pi extension that adds a read-only `/brainstorm` mode with optional `ask_user_question` tool support.
 
 ## What it does
 
 When brainstorm mode is active:
 - allows only the `read` tool
+- **also allows `ask_user_question` if the package `@juicesharp/rpiv-ask-user-question` is installed**
 - blocks shell commands and file edits/writes
 - keeps the conversation exploratory
 - avoids unsolicited "you should do X next" suggestions
@@ -13,6 +16,14 @@ When brainstorm mode is active:
 - shows a visible reminder in the UI
 - drafts a decision-oriented markdown brief when you finish
 - can replace the brainstorm transcript with the reviewed brief in LLM context when you finish without saving or when you save and choose the context-preserving option
+
+## Key difference from upstream
+
+The original extension blocks all non-read tools during brainstorm mode. This fork:
+- dynamically detects whether `ask_user_question` (`@juicesharp/rpiv-ask-user-question`) is registered
+- if found, allows it alongside `read` so the agent can ask structured multi-choice questions to clarify ambiguous requests
+- if not found, behaves exactly like the original (strictly read-only)
+- no configuration needed — detection is automatic at runtime
 
 ## UX
 
@@ -33,15 +44,28 @@ While active, the footer/widget reminds you how to finish or cancel.
 ### Quick test
 
 ```bash
-pi --no-extensions -e /home/paul/projects/pi-brainstorm/extensions/brainstorm.ts
+pi --no-extensions -e /path/to/brainstorm.ts
 ```
 
 ### Use from your normal pi setup
 
-Either:
-- install from npm with `pi install npm:@paulmupeters/pi-brainstorm`
-- copy or symlink `extensions/brainstorm.ts` into `~/.pi/agent/extensions/`
-- or add the file path to your pi extension settings
+Install from npm:
+
+```bash
+pi install npm:@aalalice233/pi-brainstorm
+```
+
+Or copy `extensions/brainstorm.ts` into `~/.pi/agent/extensions/`.
+
+### Optional: enable ask_user_question
+
+If you also want to use structured questions during brainstorm:
+
+```bash
+pi install npm:@juicesharp/rpiv-ask-user-question
+```
+
+The integration is automatic — no config needed.
 
 ## Brief export
 
@@ -87,6 +111,7 @@ If you choose **Brief to context** or **Brief to markdown and context**, the bra
 
 ## Notes
 
-- During brainstorm mode, only the `read` tool is enabled on purpose.
+- During brainstorm mode, the `read` tool is always enabled; `ask_user_question` is also enabled when the package is installed.
 - The extension restores your previously active tools after finishing/canceling.
 - If model-based brief generation is unavailable, the extension falls back to a simple markdown transcript.
+- Tool detection happens at runtime — no config or restart needed when installing/removing `@juicesharp/rpiv-ask-user-question`.
