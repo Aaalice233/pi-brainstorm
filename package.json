@@ -1,9 +1,11 @@
 {
   "name": "@aalalice233/pi-brainstorm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A conversation-only brainstorm mode extension for pi, with ask_user_question tool integration",
   "license": "MIT",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Aaalice233/pi-brainstorm.git"
@@ -28,6 +30,8 @@
     "@mariozechner/pi-tui": "*"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   }
 }
