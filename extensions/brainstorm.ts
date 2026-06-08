@@ -45,6 +45,19 @@ type PiModel = NonNullable<ExtensionContext["model"]>;
 
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
 const BRAINSTORM_TOOLS = ["read"];
+
+const getBrainstormTools = (pi: ExtensionAPI): string[] => {
+	const tools: string[] = ["read"];
+	try {
+		const allTools = pi.getAllTools();
+		if (allTools.some(t => t.name === "ask_user_question")) {
+			tools.push("ask_user_question");
+		}
+	} catch {
+		// ExtensionAPI not fully bound yet; default to read-only.
+	}
+	return tools;
+};
 const BRAINSTORM_ENTRY_TYPE = "brainstorm-state";
 const DEFAULT_TOPIC = "brainstorm";
 const BRAINSTORM_SETTINGS_KEY = "piBrainstorm";
@@ -446,7 +459,7 @@ const applyBranchState = (
 	summaryModelPreference: SummaryModelPreference | null,
 ) => {
 	if (!currentState.active && nextState.active) {
-		pi.setActiveTools(BRAINSTORM_TOOLS);
+		pi.setActiveTools(getBrainstormTools(pi));
 	}
 
 	if (currentState.active && !nextState.active) {
@@ -454,7 +467,7 @@ const applyBranchState = (
 	}
 
 	if (currentState.active && nextState.active) {
-		pi.setActiveTools(BRAINSTORM_TOOLS);
+		pi.setActiveTools(getBrainstormTools(pi));
 	}
 
 	setBrainstormUi(ctx, nextState, summaryModelPreference);
@@ -707,7 +720,7 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			previousTools: nextState.previousTools,
 		});
 
-		pi.setActiveTools(BRAINSTORM_TOOLS);
+		pi.setActiveTools(getBrainstormTools(pi));
 		state = nextState;
 		setCurrentUiState(ctx);
 		notify(
@@ -1000,8 +1013,13 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 		}
 
 		const topicLine = state.topic ? `Current topic: ${state.topic}` : undefined;
+		const brainstormTools = getBrainstormTools(pi);
+		const hasAskTool = brainstormTools.includes("ask_user_question");
+		const toolRestriction = hasAskTool
+			? "- You may use the read tool when the user asks about an existing file or referenced context.\n- Do not use any tools other than read and ask_user_question in brainstorm mode.\n- Use the ask_user_question tool to ask the user structured clarifying questions when their request is ambiguous. Each question must have 2-4 options."
+			: "- You may use the read tool when the user asks about an existing file or referenced context.\n- Do not use any tools other than read in brainstorm mode.";
 		return {
-			systemPrompt: `${event.systemPrompt}\n\nYou are in brainstorm mode. This is a read-only ideation session.\n\nRules:\n- Answer the user's questions directly.\n- Help compare ideas, sharpen tradeoffs, and refine thinking.\n- Do not suggest implementation steps, code changes, tasks, or action plans unless the user explicitly asks for them.\n- Do not volunteer to edit files, write code, or create plans.\n- If the user asks for the best option, choose one and explain why.\n- Avoid empty neutrality. Do not stop at \"it depends\"; still make a recommendation when the user wants one.\n- Be engaged and opinionated, but not pushy.\n- Keep answers concise unless the user asks for depth.\n- You may use the read tool when the user asks about an existing file or referenced context.\n- Do not use any tools other than read in brainstorm mode.\n${topicLine ? `- ${topicLine}` : ""}`,
+			systemPrompt: `${event.systemPrompt}\n\nYou are in brainstorm mode. This is a read-only ideation session.\n\nRules:\n- Answer the user's questions directly.\n- Help compare ideas, sharpen tradeoffs, and refine thinking.\n- Do not suggest implementation steps, code changes, tasks, or action plans unless the user explicitly asks for them.\n- Do not volunteer to edit files, write code, or create plans.\n- If the user asks for the best option, choose one and explain why.\n- Avoid empty neutrality. Do not stop at \"it depends\"; still make a recommendation when the user wants one.\n- Be engaged and opinionated, but not pushy.\n- Keep answers concise unless the user asks for depth.\n${toolRestriction}\n${topicLine ? `- ${topicLine}` : ""}`,
 		};
 	});
 
@@ -1019,7 +1037,8 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		if (event.toolName === "read") {
+		const allowedTools = getBrainstormTools(pi);
+		if (allowedTools.includes(event.toolName)) {
 			return;
 		}
 
