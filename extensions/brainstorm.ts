@@ -84,7 +84,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 	find: "You may use the **find** tool to locate files by glob pattern.",
 	grep: "You may use the **grep** tool to search file contents for patterns (respects .gitignore).",
 	ask_user_question: "Use the **ask_user_question** tool to ask the user structured clarifying questions (2-4 options each) when their request is ambiguous.",
-	subagent: "You may use the **subagent** tool with `subagent_type: \"Explore\"` for deep codebase investigation. Use `run_in_background: true` for non-blocking exploration.",
+	subagent: "You may use the **subagent** tool **only** with `subagent_type: \"Explore\"` for read-only codebase investigation. Use `run_in_background: true` for non-blocking exploration. Other subagent types are blocked in brainstorm mode.",
 	get_subagent_result: "You may use the **get_subagent_result** tool to check an Explore subagent's results.",
 };
 
@@ -1088,15 +1088,24 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 		}
 
 		const allowedTools = getBrainstormTools(pi);
-		if (allowedTools.includes(event.toolName)) {
-			return;
+		if (!allowedTools.includes(event.toolName)) {
+			const allowedList = formatAllowedList(allowedTools);
+			return {
+				block: true,
+				reason: `Brainstorm mode only permits ${allowedList}. Finish or cancel /brainstorm to use other tools.`,
+			};
 		}
 
-		const allowedList = formatAllowedList(allowedTools);
-		return {
-			block: true,
-			reason: `Brainstorm mode only permits ${allowedList}. Finish or cancel /brainstorm to use other tools.`,
-		};
+		// Only Explore-type subagents are safe during brainstorm (read-only).
+		if (event.toolName === "subagent") {
+			const subagentType = (event.input as Record<string, unknown>)["subagent_type"];
+			if (typeof subagentType !== "string" || subagentType.toLowerCase() !== "explore") {
+				return {
+					block: true,
+					reason: `Brainstorm mode only allows subagent with subagent_type: "Explore" for read-only investigation. "${subagentType ?? "(none)"}" may modify files. Finish or cancel /brainstorm to use other subagent types.`,
+				};
+			}
+		}
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
