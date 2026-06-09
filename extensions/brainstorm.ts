@@ -162,10 +162,7 @@ const parseSummaryModelPreference = (value: string): SummaryModelPreference | nu
 const sameModel = (
 	a: { provider: string; id: string } | undefined | null,
 	b: { provider: string; id: string } | undefined | null,
-): boolean => {
-	if (!a && !b) return true;
-	return !!a && !!b && a.provider === b.provider && a.id === b.id;
-};
+): boolean => !!a && !!b && a.provider === b.provider && a.id === b.id;
 
 const getPiAgentDir = (): string =>
 	process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : resolve(homedir(), ".pi/agent");
