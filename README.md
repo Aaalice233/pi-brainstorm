@@ -1,14 +1,16 @@
 # pi-brainstorm
 
-> Fork of [@paulmupeters/pi-brainstorm](https://github.com/paulmupeters/pi-brainstorm) with `ask_user_question` tool integration.
+> Fork of [@paulmupeters/pi-brainstorm](https://github.com/paulmupeters/pi-brainstorm) with expanded read-only tool support.
 
-A pi extension that adds a read-only `/brainstorm` mode with optional `ask_user_question` tool support.
+A pi extension that adds a read-only `/brainstorm` mode with dynamic tool detection. During brainstorm, the agent can use `read`, `find`, and any of the following optional tools if registered in the environment:
+- `grep` — for pattern search within files
+- `ask_user_question` — for structured clarifying questions
+- `subagent` / `get_subagent_result` — for deep codebase exploration
 
 ## What it does
 
 When brainstorm mode is active:
-- allows only the `read` tool
-- **also allows `ask_user_question` if the package `@juicesharp/rpiv-ask-user-question` is installed**
+- allows `read`, `find` and any detected optional tools (`grep`, `ask_user_question`, `subagent`, `get_subagent_result`)
 - blocks shell commands and file edits/writes
 - keeps the conversation exploratory
 - avoids unsolicited "you should do X next" suggestions
@@ -20,10 +22,10 @@ When brainstorm mode is active:
 ## Key difference from upstream
 
 The original extension blocks all non-read tools during brainstorm mode. This fork:
-- dynamically detects whether `ask_user_question` (`@juicesharp/rpiv-ask-user-question`) is registered
-- if found, allows it alongside `read` so the agent can ask structured multi-choice questions to clarify ambiguous requests
-- if not found, behaves exactly like the original (strictly read-only)
-- no configuration needed — detection is automatic at runtime
+- dynamically detects which tools are available in the current pi environment (`grep`, `ask_user_question`, `subagent`, `get_subagent_result`)
+- allows all detected tools alongside `read` and `find`, giving the agent richer capabilities during brainstorm (e.g. searching code, asking structured questions, exploring codebases in background)
+- silently omits tools that are not registered — no configuration needed
+- shows a dynamic allowed-tool list in the system prompt so the agent knows exactly what it can use
 
 ## UX
 
@@ -57,15 +59,23 @@ pi install npm:@aalalice233/pi-brainstorm
 
 Or copy `extensions/brainstorm.ts` into `~/.pi/agent/extensions/`.
 
-### Optional: enable ask_user_question
+### Optional: enable additional brainstorm tools
 
-If you also want to use structured questions during brainstorm:
+The extension detects these optional tools at runtime — install any of the packages below and the tool is automatically available in brainstorm mode:
+
+| Tool | Package |
+|---|---|
+| `grep` | Built-in to pi, no extra install needed |
+| `ask_user_question` | `@juicesharp/rpiv-ask-user-question` |
+| `subagent` / `get_subagent_result` | Built-in to pi, no extra install needed |
+
+For example:
 
 ```bash
 pi install npm:@juicesharp/rpiv-ask-user-question
 ```
 
-The integration is automatic — no config needed.
+All tool detection is automatic — no config needed.
 
 ## Brief export
 
@@ -111,7 +121,7 @@ If you choose **Brief to context** or **Brief to markdown and context**, the bra
 
 ## Notes
 
-- During brainstorm mode, the `read` tool is always enabled; `ask_user_question` is also enabled when the package is installed.
+- During brainstorm mode, `read` and `find` are always enabled; `grep`, `ask_user_question`, `subagent`, and `get_subagent_result` are enabled when their respective packages/tools are registered.
 - The extension restores your previously active tools after finishing/canceling.
 - If model-based brief generation is unavailable, the extension falls back to a simple markdown transcript.
-- Tool detection happens at runtime — no config or restart needed when installing/removing `@juicesharp/rpiv-ask-user-question`.
+- Tool detection happens at runtime — no config or restart needed when installing/removing packages or when tools become available/unavailable.

@@ -44,17 +44,24 @@ type SummaryModelPreference = {
 type PiModel = NonNullable<ExtensionContext["model"]>;
 
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
-const BRAINSTORM_TOOLS = ["read"];
 
 const getBrainstormTools = (pi: ExtensionAPI): string[] => {
-	const tools: string[] = ["read"];
+	const tools: string[] = ["read", "find"];
 	try {
 		const allTools = pi.getAllTools();
-		if (allTools.some(t => t.name === "ask_user_question")) {
+		const toolNames = new Set(allTools.map(t => t.name));
+		if (toolNames.has("grep")) {
+			tools.push("grep");
+		}
+		if (toolNames.has("ask_user_question")) {
 			tools.push("ask_user_question");
 		}
+		if (toolNames.has("subagent")) {
+			tools.push("subagent", "get_subagent_result");
+		}
 	} catch {
-		// ExtensionAPI not fully bound yet; default to read-only.
+		// ExtensionAPI not fully bound yet — expected during startup; default to read-only and find.
+		console.debug("[brainstorm] ExtensionAPI not fully bound yet, using default tools");
 	}
 	return tools;
 };
@@ -69,6 +76,21 @@ const SUMMARY_TO_MARKDOWN_OPTION = "Brief to markdown";
 const SUMMARY_TO_MARKDOWN_AND_CONTEXT_OPTION = "Brief to markdown and context";
 const CONTINUE_BRAINSTORMING_OPTION = "Continue brainstorming";
 const EXIT_OPTION = "Exit";
+const FINISH_BRAINSTORM_MENU_OPTION = "Finish and summarize";
+const CANCEL_BRAINSTORM_MENU_OPTION = "Cancel and discard";
+
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+	read: "You may use the **read** tool when the user asks about an existing file or referenced context.",
+	find: "You may use the **find** tool to locate files by glob pattern.",
+	grep: "You may use the **grep** tool to search file contents for patterns (respects .gitignore).",
+	ask_user_question: "Use the **ask_user_question** tool to ask the user structured clarifying questions (2-4 options each) when their request is ambiguous.",
+	subagent: "You may use the **subagent** tool with `subagent_type: \"Explore\"` for deep codebase investigation. Use `run_in_background: true` for non-blocking exploration.",
+	get_subagent_result: "You may use the **get_subagent_result** tool to check an Explore subagent's results.",
+};
+
+const formatAllowedList = (tools: string[]): string =>
+	tools.map(t => `\`${t}\``).join(", ");
+
 const BRAINSTORM_CONTEXT_SUMMARY_CUSTOM_TYPE = "brainstorm-context-summary";
 const BRAINSTORM_CONTEXT_SUMMARY_PREFIX =
 	"A previous brainstorm transcript was replaced with the following brief:\n\n<brief>\n";
@@ -140,7 +162,10 @@ const parseSummaryModelPreference = (value: string): SummaryModelPreference | nu
 const sameModel = (
 	a: { provider: string; id: string } | undefined | null,
 	b: { provider: string; id: string } | undefined | null,
-): boolean => !!a && !!b && a.provider === b.provider && a.id === b.id;
+): boolean => {
+	if (!a && !b) return true;
+	return !!a && !!b && a.provider === b.provider && a.id === b.id;
+};
 
 const getPiAgentDir = (): string =>
 	process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : resolve(homedir(), ".pi/agent");
@@ -316,9 +341,6 @@ const getBrainstormContextCompressions = (branch: SessionEntry[]): BrainstormCon
 	return compressions;
 };
 
-const buildBrainstormContextSummaryMessage = (summary: string): string =>
-	`${BRAINSTORM_CONTEXT_SUMMARY_PREFIX}${summary.trim()}${BRAINSTORM_CONTEXT_SUMMARY_SUFFIX}`;
-
 const buildBrainstormAwareContextMessages = (branch: SessionEntry[]): AgentMessage[] | null => {
 	const compressions = getBrainstormContextCompressions(branch);
 	if (compressions.length === 0) {
@@ -355,7 +377,7 @@ const buildBrainstormAwareContextMessages = (branch: SessionEntry[]): AgentMessa
 					parentId,
 					timestamp: currentCompression.timestamp,
 					customType: BRAINSTORM_CONTEXT_SUMMARY_CUSTOM_TYPE,
-					content: buildBrainstormContextSummaryMessage(currentCompression.summary),
+					content: `${BRAINSTORM_CONTEXT_SUMMARY_PREFIX}${currentCompression.summary.trim()}${BRAINSTORM_CONTEXT_SUMMARY_SUFFIX}`,
 					display: false,
 					details: { startedAt: currentCompression.startedAt },
 				};
@@ -433,7 +455,7 @@ const setBrainstormUi = (
 	ctx.ui.setWidget("brainstorm", [
 		ctx.ui.theme.fg("accent", ctx.ui.theme.bold("🧠 Brainstorm mode active")),
 		state.topic ? `${ctx.ui.theme.fg("dim", "topic:")} ${state.topic}` : ctx.ui.theme.fg("dim", "topic: general"),
-		`${ctx.ui.theme.fg("dim", "summary:")} ${getSummaryModelLabel(summaryModelPreference)}`,
+		`${ctx.ui.theme.fg("dim", "summary:")} ${summaryModelPreference ? formatSummaryModelPreference(summaryModelPreference) : "active model"}`,
 		ctx.ui.theme.fg("dim", "read-only • file edits and shell commands blocked"),
 		ctx.ui.theme.fg(
 			"dim",
@@ -442,12 +464,11 @@ const setBrainstormUi = (
 	]);
 };
 
-const getSummaryModelLabel = (summaryModelPreference: SummaryModelPreference | null): string =>
-	summaryModelPreference ? formatSummaryModelPreference(summaryModelPreference) : "active model";
-
 const notify = (ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info") => {
 	if (ctx.hasUI) {
 		ctx.ui.notify(message, level);
+	} else if (level !== "info") {
+		console.error(`[brainstorm] ${level}: ${message}`);
 	}
 };
 
@@ -458,16 +479,10 @@ const applyBranchState = (
 	nextState: BrainstormState,
 	summaryModelPreference: SummaryModelPreference | null,
 ) => {
-	if (!currentState.active && nextState.active) {
+	if (nextState.active) {
 		pi.setActiveTools(getBrainstormTools(pi));
-	}
-
-	if (currentState.active && !nextState.active) {
+	} else if (currentState.active) {
 		pi.setActiveTools(currentState.previousTools.length > 0 ? currentState.previousTools : DEFAULT_TOOLS);
-	}
-
-	if (currentState.active && nextState.active) {
-		pi.setActiveTools(getBrainstormTools(pi));
 	}
 
 	setBrainstormUi(ctx, nextState, summaryModelPreference);
@@ -549,6 +564,32 @@ const summarizeConversation = async (
 		.trim();
 };
 
+const callSummarizeWithFallback = async (
+	model: PiModel,
+	apiKey: string,
+	headers: Record<string, string> | undefined,
+	state: BrainstormState,
+	conversationText: string,
+	fallbackSummary: string,
+	signal?: AbortSignal,
+): Promise<string | null> => {
+	try {
+		const summary = await summarizeConversation(
+			model,
+			apiKey,
+			headers,
+			state,
+			conversationText,
+			signal,
+		);
+		return summary || fallbackSummary;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message === "aborted") return null;
+		return fallbackSummary;
+	}
+};
+
 const generateSummary = async (
 	state: BrainstormState,
 	summaryModelPreference: SummaryModelPreference | null,
@@ -574,47 +615,34 @@ const generateSummary = async (
 	const sourceLabel = resolution.source === "override" ? "summary model" : "active model";
 
 	if (!ctx.hasUI) {
-		try {
-			const summary = await summarizeConversation(
-				resolution.model,
-				resolution.auth.apiKey,
-				resolution.auth.headers,
-				state,
-				conversationText,
-				ctx.signal,
-			);
-			return summary || fallbackSummary;
-		} catch {
-			return fallbackSummary;
-		}
+		const summary = await callSummarizeWithFallback(
+			resolution.model,
+			resolution.auth.apiKey,
+			resolution.auth.headers,
+			state,
+			conversationText,
+			fallbackSummary,
+			ctx.signal,
+		);
+		return summary ?? fallbackSummary;
 	}
 
 	const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
 		const loader = new BorderedLoader(tui, theme, `Summarizing brainstorm with ${resolution.model.id} (${sourceLabel})...`);
 		loader.onAbort = () => done(null);
 
-		const summarize = async () => {
-			try {
-				const summary = await summarizeConversation(
-					resolution.model,
-					resolution.auth.apiKey,
-					resolution.auth.headers,
-					state,
-					conversationText,
-					loader.signal,
-				);
-				done(summary || fallbackSummary);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				if (message === "aborted") {
-					done(null);
-					return;
-				}
-				done(fallbackSummary);
-			}
-		};
+		callSummarizeWithFallback(
+			resolution.model,
+			resolution.auth.apiKey,
+			resolution.auth.headers,
+			state,
+			conversationText,
+			fallbackSummary,
+			loader.signal,
+		)
+			.then(s => done(s ?? fallbackSummary))
+			.catch(() => done(fallbackSummary));
 
-		summarize().catch(() => done(fallbackSummary));
 		return loader;
 	});
 
@@ -640,8 +668,12 @@ const saveSummaryToFile = async (summary: string, state: BrainstormState, ctx: E
 		if (!overwrite) {
 			return null;
 		}
-	} catch {
-		// File does not exist yet.
+	} catch (error) {
+		const fsError = error as NodeJS.ErrnoException;
+		if (fsError.code !== "ENOENT") {
+			throw error;
+		}
+		// File does not exist — expected, proceed to create.
 	}
 
 	await mkdir(dirname(absolutePath), { recursive: true });
@@ -669,9 +701,11 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 		} catch (error) {
 			summaryModelPreference = null;
 			summaryModelPreferenceLoaded = true;
+			const message = error instanceof Error ? error.message : String(error);
 			if (ctx) {
-				const message = error instanceof Error ? error.message : String(error);
 				notify(ctx, `Could not load brainstorm settings from ${getGlobalSettingsPath()}: ${message}`, "warning");
+			} else {
+				console.warn(`[brainstorm] Could not load settings from ${getGlobalSettingsPath()}: ${message}`);
 			}
 		}
 	};
@@ -774,6 +808,10 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			return;
 		}
 
+		await handleFinishAction(ctx, reviewedSummary);
+	};
+
+	const handleFinishAction = async (ctx: ExtensionCommandContext, reviewedSummary: string) => {
 		const nextAction = await ctx.ui.select("Finish brainstorm", [
 			SUMMARY_TO_CONTEXT_OPTION,
 			SUMMARY_TO_MARKDOWN_OPTION,
@@ -811,22 +849,25 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			return;
 		}
 
-		stopBrainstorm("finish", ctx, { savedPath });
-		notify(ctx, `Brainstorm brief saved to ${savedPath}`, "info");
+		if (nextAction === SUMMARY_TO_MARKDOWN_OPTION) {
+			stopBrainstorm("finish", ctx, { savedPath });
+			notify(ctx, `Brainstorm brief saved to ${savedPath}`, "info");
+			return;
+		}
 	};
 
 	const openBrainstormMenu = async (ctx: ExtensionCommandContext) => {
 		const choice = await ctx.ui.select("Brainstorm mode", [
-			"Continue brainstorming",
-			"Finish and summarize",
-			"Cancel and discard",
+			CONTINUE_BRAINSTORMING_OPTION,
+			FINISH_BRAINSTORM_MENU_OPTION,
+			CANCEL_BRAINSTORM_MENU_OPTION,
 		]);
 
-		if (!choice || choice === "Continue brainstorming") {
+		if (!choice || choice === CONTINUE_BRAINSTORMING_OPTION) {
 			return;
 		}
 
-		if (choice === "Finish and summarize") {
+		if (choice === FINISH_BRAINSTORM_MENU_OPTION) {
 			await finishBrainstorm(ctx);
 			return;
 		}
@@ -866,8 +907,8 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 		await openBrainstormMenu(ctx);
 	};
 
-	const openSummaryModelSelector = async (ctx: ExtensionCommandContext) => {
-		const availableModels = ctx.modelRegistry
+	const buildModelOptions = (modelRegistry: ExtensionCommandContext["modelRegistry"]) => {
+		const availableModels = modelRegistry
 			.getAvailable()
 			.slice()
 			.sort((a, b) => formatModelRef(a.provider, a.id).localeCompare(formatModelRef(b.provider, b.id)));
@@ -906,6 +947,12 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			optionMap.set(unavailableLabel, summaryModelPreference);
 			options.splice(1, 0, unavailableLabel);
 		}
+
+		return { optionMap, options };
+	};
+
+	const openSummaryModelSelector = async (ctx: ExtensionCommandContext) => {
+		const { optionMap, options } = buildModelOptions(ctx.modelRegistry);
 
 		const choice = await ctx.ui.select("Brainstorm summary model", options);
 		if (!choice || !optionMap.has(choice)) {
@@ -1014,10 +1061,13 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 
 		const topicLine = state.topic ? `Current topic: ${state.topic}` : undefined;
 		const brainstormTools = getBrainstormTools(pi);
-		const hasAskTool = brainstormTools.includes("ask_user_question");
-		const toolRestriction = hasAskTool
-			? "- You may use the read tool when the user asks about an existing file or referenced context.\n- Do not use any tools other than read and ask_user_question in brainstorm mode.\n- Use the ask_user_question tool to ask the user structured clarifying questions when their request is ambiguous. Each question must have 2-4 options."
-			: "- You may use the read tool when the user asks about an existing file or referenced context.\n- Do not use any tools other than read in brainstorm mode.";
+		const toolGuide = brainstormTools
+			.map(tool => TOOL_DESCRIPTIONS[tool])
+			.filter(Boolean)
+			.map(desc => `- ${desc}`)
+			.join("\n");
+		const allowedList = formatAllowedList(brainstormTools);
+		const toolRestriction = `${toolGuide}\n- Do not use any tools other than ${allowedList} in brainstorm mode.`;
 		return {
 			systemPrompt: `${event.systemPrompt}\n\nYou are in brainstorm mode. This is a read-only ideation session.\n\nRules:\n- Answer the user's questions directly.\n- Help compare ideas, sharpen tradeoffs, and refine thinking.\n- Do not suggest implementation steps, code changes, tasks, or action plans unless the user explicitly asks for them.\n- Do not volunteer to edit files, write code, or create plans.\n- If the user asks for the best option, choose one and explain why.\n- Avoid empty neutrality. Do not stop at \"it depends\"; still make a recommendation when the user wants one.\n- Be engaged and opinionated, but not pushy.\n- Keep answers concise unless the user asks for depth.\n${toolRestriction}\n${topicLine ? `- ${topicLine}` : ""}`,
 		};
@@ -1042,9 +1092,10 @@ export default function brainstormExtension(pi: ExtensionAPI) {
 			return;
 		}
 
+		const allowedList = formatAllowedList(allowedTools);
 		return {
 			block: true,
-			reason: "Brainstorm mode is read-only. Only the read tool is allowed until you finish or cancel /brainstorm.",
+			reason: `Brainstorm mode only permits ${allowedList}. Finish or cancel /brainstorm to use other tools.`,
 		};
 	});
 

@@ -1,7 +1,7 @@
 {
   "name": "@aalalice233/pi-brainstorm",
-  "version": "0.2.1",
-  "description": "A conversation-only brainstorm mode extension for pi, with ask_user_question tool integration",
+  "version": "0.3.0",
+  "description": "A conversation-only brainstorm mode extension for pi, with dynamic tool detection (grep, ask_user_question, subagent)",
   "license": "MIT",
   "keywords": [
     "pi-package"
